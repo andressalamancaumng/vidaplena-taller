@@ -17,8 +17,10 @@ taller.
 from typing import Optional
 from datetime import date, time as time_type
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+# Esquema de seguridad OAuth2
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
 from app import database
@@ -40,6 +42,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Seguridad y Autenticación 
+# ---------------------------------------------------------------------------
+# Define que el token se obtiene en el endpoint de login de admin
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login/admin")
+
+def verificar_admin(token: str = Depends(oauth2_scheme)):
+    """
+    Valida el token enviado en el encabezado Authorization.
+    En esta fase, se usa un token estático simulado.
+    """
+    if token != "admin_secreto_123":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Acceso denegado: Token inválido o ausente",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token
 
 # ---------------------------------------------------------------------------
 # Modelos de entrada
@@ -127,7 +147,13 @@ def login_admin(datos: LoginRequest):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+        return {
+            "id": fila[0],
+            "usuario": fila[1], 
+            "rol": fila[2],
+            "access_token": "admin_secreto_123",
+            "token_type": "bearer"
+            }
     finally:
         cursor.close()
         conexion.close()
@@ -139,8 +165,9 @@ def buscar_paciente(cedula: str):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        consulta = f"SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = '{cedula}'"
-        cursor.execute(consulta)
+        # Modificación %s para parametrizar la busqueda
+        consulta = "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s"
+        cursor.execute(consulta, (cedula,))
         filas = cursor.fetchall()
         return [fila_a_dict(cursor, f) for f in filas]
     finally:
@@ -232,7 +259,7 @@ def facturas_de_paciente(paciente_id: int):
 # Panel administrativo
 # ---------------------------------------------------------------------------
 
-@app.get("/api/admin/pacientes")
+@app.get("/api/admin/pacientes", dependencies=[Depends(verificar_admin)])
 def listar_todos_los_pacientes():
     """
     Vista administrativa: todos los pacientes con su última consulta y
