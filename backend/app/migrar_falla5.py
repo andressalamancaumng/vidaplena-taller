@@ -12,6 +12,7 @@ import base64
 import hashlib
 import hmac
 import os
+import bcrypt
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -44,6 +45,15 @@ def hash_busqueda(valor: str) -> str:
         valor.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+def hashear_contrasena(contrasena: str) -> str:
+    return bcrypt.hashpw(
+        contrasena.encode("utf-8"),
+        bcrypt.gensalt(),
+    ).decode("utf-8")
+
+def es_hash_bcrypt(contrasena: str) -> bool:
+    return contrasena.startswith(("$2a$", "$2b$", "$2y$"))
 
 
 def columna_existe(cursor, tabla: str, columna: str) -> bool:
@@ -90,7 +100,32 @@ def main():
                 "ALTER TABLE pacientes "
                 "ADD COLUMN cedula_hash VARCHAR(64) NULL AFTER cedula"
             )
+        # Migrar contraseñas de pacientes a bcrypt.
+        cursor.execute("SELECT id, contrasena FROM pacientes")
+        contrasenas_pacientes = cursor.fetchall()
 
+        for paciente_id, contrasena_guardada in contrasenas_pacientes:
+            if not es_hash_bcrypt(contrasena_guardada):
+                cursor.execute(
+                    "UPDATE pacientes SET contrasena = %s WHERE id = %s",
+                    (
+                        hashear_contrasena(contrasena_guardada),
+                        paciente_id,
+                    ),
+                )
+        # Migrar contraseñas de administradores a bcrypt.
+        cursor.execute("SELECT id, contrasena FROM usuarios_admin")
+        contrasenas_admin = cursor.fetchall()
+
+        for admin_id, contrasena_guardada in contrasenas_admin:
+            if not es_hash_bcrypt(contrasena_guardada):
+                cursor.execute(
+                    "UPDATE usuarios_admin SET contrasena = %s WHERE id = %s",
+                    (
+                        hashear_contrasena(contrasena_guardada),
+                        admin_id,
+                    ),
+                )
         # Migrar cédulas.
         cursor.execute("SELECT id, cedula FROM pacientes")
         pacientes = cursor.fetchall()

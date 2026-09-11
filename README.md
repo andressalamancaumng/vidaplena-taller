@@ -12,8 +12,31 @@ guía interactiva del taller — pregúntale a tu profesor por el enlace si no l
 ```bash
 git clone <url-de-este-repo>
 cd vidaplena-taller
+```
+
+### Configurar la llave de cifrado
+
+Antes de iniciar la aplicación por primera vez, se debe crear el archivo `backend/.env` con una llave Fernet. Este archivo contiene un secreto y no debe subirse al repositorio.
+
+Puede generarse una llave válida con:
+
+```bash
+docker run --rm python:3.11-slim python -c "import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+Luego crear el archivo `backend/.env` con el siguiente formato:
+
+```text
+FERNET_KEY=PEGAR_AQUI_LA_LLAVE_GENERADA
+```
+
+Finalmente iniciar la aplicación:
+
+```bash
 docker compose up --build
 ```
+
+Al iniciar el backend se ejecuta automáticamente la migración de seguridad. Las contraseñas que aún estén en texto plano se transforman a bcrypt y los campos sensibles `cedula` y `diagnostico` se cifran con Fernet.
 
 - Frontend: http://localhost:4200
 - API / documentación interactiva: http://localhost:8000/docs
