@@ -17,17 +17,27 @@ taller.
 from typing import Optional
 from datetime import date, time as time_type
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from passlib.context import CryptContext
 
 from app import database
+
+
 
 app = FastAPI(
     title="VidaPlena API",
     description="Red de Clínicas VidaPlena — aplicación del taller de Seguridad de Datos (UMNG).",
     version="1.0.0",
 )
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+ADMIN_API_KEY = "vidaplenaAD-2026"  # clave simple para el taller
+
+def verificar_admin(x_admin_key: str = Header(...)):
+    if x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="No autorizado")
 
 # CORS abierto a propósito para simplificar el taller (el frontend Angular
 # corre en un puerto distinto al backend). Esto no es una de las fallas
@@ -88,7 +98,7 @@ def registrar_paciente(datos: PacienteRegistro):
         cursor.execute(
             "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
             "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, datos.contrasena),
+            (datos.nombre, datos.cedula, datos.telefono, datos.correo, pwd_context.hash(datos.contrasena)),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -103,17 +113,16 @@ def login_paciente(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not pwd_context.verify(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
     finally:
         cursor.close()
         conexion.close()
-
 
 @app.post("/api/login/admin")
 def login_admin(datos: LoginRequest):
@@ -121,11 +130,11 @@ def login_admin(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, usuario, rol FROM usuarios_admin WHERE usuario = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, usuario, rol, contrasena FROM usuarios_admin WHERE usuario = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not pwd_context.verify(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
     finally:
@@ -171,13 +180,13 @@ def crear_cita(datos: CitaCreate):
 
 
 @app.get("/api/citas/{cita_id}")
-def obtener_cita(cita_id: int):
+def obtener_cita(cita_id: int, cedula_solicitante: str):
     """Detalle completo de una cita, incluido el diagnóstico."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT c.id, c.paciente_id, p.nombre, c.fecha, c.hora, c.medico, "
+            "SELECT c.id, c.paciente_id, p.nombre, p.cedula, c.fecha, c.hora, c.medico, "
             "c.motivo_consulta, c.diagnostico "
             "FROM citas c JOIN pacientes p ON p.id = c.paciente_id "
             "WHERE c.id = %s",
@@ -186,7 +195,12 @@ def obtener_cita(cita_id: int):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=404, detail="Cita no encontrada")
-        return fila_a_dict(cursor, fila)
+
+        datos = fila_a_dict(cursor, fila)
+        if datos["cedula"] != cedula_solicitante:
+            raise HTTPException(status_code=403, detail="No autorizado para ver esta cita")
+
+        return datos
     finally:
         cursor.close()
         conexion.close()
@@ -233,7 +247,7 @@ def facturas_de_paciente(paciente_id: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/admin/pacientes")
-def listar_todos_los_pacientes():
+def listar_todos_los_pacientes(admin: None = Depends(verificar_admin)):
     """
     Vista administrativa: todos los pacientes con su última consulta y
     diagnóstico, pensada para el personal de la clínica.
