@@ -16,6 +16,7 @@ export interface PacienteSesion {
   id: number;
   nombre: string;
   cedula: string;
+  token: string;
 }
 
 export interface AdminSesion {
@@ -23,6 +24,7 @@ export interface AdminSesion {
   id: number;
   usuario: string;
   rol: string;
+  token: string;
 }
 
 export type Sesion = PacienteSesion | AdminSesion;
