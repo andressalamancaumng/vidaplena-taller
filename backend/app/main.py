@@ -139,8 +139,8 @@ def buscar_paciente(cedula: str):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        consulta = f"SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = '{cedula}'"
-        cursor.execute(consulta)
+        consulta = "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s"
+        cursor.execute(consulta, (cedula,))
         filas = cursor.fetchall()
         return [fila_a_dict(cursor, f) for f in filas]
     finally:
