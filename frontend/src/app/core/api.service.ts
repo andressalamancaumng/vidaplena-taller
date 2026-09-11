@@ -55,8 +55,16 @@ export class ApiService {
   }
 
   obtenerCitaPorId(id: number): Observable<any> {
-    return this.http.get(`${API_URL}/citas/${id}`);
-  }
+  const sesion = this.session.obtenerSesion();
+  const credenciales =
+    sesion?.tipo === 'paciente' ? btoa(`${sesion.cedula}:${sesion.contrasena}`) : '';
+
+  const headers = new HttpHeaders({
+    Authorization: `Basic ${credenciales}`,
+  });
+
+  return this.http.get(`${API_URL}/citas/${id}`, { headers });
+}
 
   citasDePaciente(pacienteId: number): Observable<any[]> {
     return this.http.get<any[]>(`${API_URL}/citas/paciente/${pacienteId}`);

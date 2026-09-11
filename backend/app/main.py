@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from app import database
 
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import bcrypt
 
 security = HTTPBasic()
 
@@ -48,6 +49,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Modelos de entrada
 # ---------------------------------------------------------------------------
+
 
 class PacienteRegistro(BaseModel):
     nombre: str
@@ -75,14 +77,30 @@ class CitaCreate(BaseModel):
 # Utilidad
 # ---------------------------------------------------------------------------
 
+
 def fila_a_dict(cursor, fila):
     columnas = [desc[0] for desc in cursor.description]
     return dict(zip(columnas, fila))
 
 
+def hashear_contrasena(contrasena_plana: str) -> str:
+    """Genera un hash bcrypt (con salt incorporado) a partir de una contraseña en texto plano."""
+    return bcrypt.hashpw(contrasena_plana.encode("utf-8"), bcrypt.gensalt()).decode(
+        "utf-8"
+    )
+
+
+def verificar_contrasena(contrasena_plana: str, hash_guardado: str) -> bool:
+    """Compara una contraseña en texto plano contra su hash bcrypt almacenado."""
+    return bcrypt.checkpw(
+        contrasena_plana.encode("utf-8"), hash_guardado.encode("utf-8")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pacientes
 # ---------------------------------------------------------------------------
+
 
 @app.post("/api/pacientes/registro")
 def registrar_paciente(datos: PacienteRegistro):
@@ -92,7 +110,13 @@ def registrar_paciente(datos: PacienteRegistro):
         cursor.execute(
             "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
             "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, datos.contrasena),
+            (
+                datos.nombre,
+                datos.cedula,
+                datos.telefono,
+                datos.correo,
+                hashear_contrasena(datos.contrasena),
+            ),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -107,11 +131,11 @@ def login_paciente(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not verificar_contrasena(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
     finally:
@@ -125,11 +149,11 @@ def login_admin(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, usuario, rol FROM usuarios_admin WHERE usuario = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, usuario, rol, contrasena FROM usuarios_admin WHERE usuario = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not verificar_contrasena(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
     finally:
@@ -158,6 +182,7 @@ def buscar_paciente(cedula: str):
 # Citas
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/citas")
 def crear_cita(datos: CitaCreate):
     conexion = database.obtener_conexion()
@@ -166,8 +191,14 @@ def crear_cita(datos: CitaCreate):
         cursor.execute(
             "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
-             datos.motivo_consulta, datos.diagnostico),
+            (
+                datos.paciente_id,
+                datos.fecha,
+                datos.hora,
+                datos.medico,
+                datos.motivo_consulta,
+                datos.diagnostico,
+            ),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Cita creada"}
@@ -176,8 +207,30 @@ def crear_cita(datos: CitaCreate):
         conexion.close()
 
 
+def verificar_paciente(credenciales: HTTPBasicCredentials = Depends(security)):
+    conexion = database.obtener_conexion()
+    cursor = conexion.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
+            (credenciales.username,),
+        )
+        fila = cursor.fetchone()
+    finally:
+        cursor.close()
+        conexion.close()
+
+    if not fila or not verificar_contrasena(credenciales.password, fila[3]):
+        raise HTTPException(
+            status_code=401,
+            detail="Credenciales de paciente inválidas",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+
+
 @app.get("/api/citas/{cita_id}")
-def obtener_cita(cita_id: int):
+def obtener_cita(cita_id: int, paciente: dict = Depends(verificar_paciente)):
     """Detalle completo de una cita, incluido el diagnóstico."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
@@ -192,7 +245,14 @@ def obtener_cita(cita_id: int):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=404, detail="Cita no encontrada")
-        return fila_a_dict(cursor, fila)
+
+        cita = fila_a_dict(cursor, fila)
+        if cita["paciente_id"] != paciente["id"]:
+            raise HTTPException(
+                status_code=403, detail="No tiene permiso para consultar esta cita"
+            )
+
+        return cita
     finally:
         cursor.close()
         conexion.close()
@@ -218,6 +278,7 @@ def citas_de_paciente(paciente_id: int):
 # Facturas
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/facturas/paciente/{paciente_id}")
 def facturas_de_paciente(paciente_id: int):
     conexion = database.obtener_conexion()
@@ -238,28 +299,30 @@ def facturas_de_paciente(paciente_id: int):
 # Panel administrativo
 # ---------------------------------------------------------------------------
 
+
 def verificar_admin(credenciales: HTTPBasicCredentials = Depends(security)):
-    """Valida usuario/contraseña de administrador contra la base de datos
-    antes de dejar pasar a un endpoint protegido."""
+    """Valida usuario/contraseña de administrador contra la base de datos antes de dejar
+    pasar a un endpoint protegido."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, usuario, rol FROM usuarios_admin WHERE usuario = %s AND contrasena = %s",
-            (credenciales.username, credenciales.password),
+            "SELECT id, usuario, rol, contrasena FROM usuarios_admin WHERE usuario = %s",
+            (credenciales.username,),
         )
         fila = cursor.fetchone()
     finally:
         cursor.close()
         conexion.close()
 
-    if not fila:
+    if not fila or not verificar_contrasena(credenciales.password, fila[3]):
         raise HTTPException(
             status_code=401,
             detail="Credenciales de administrador inválidas",
             headers={"WWW-Authenticate": "Basic"},
         )
     return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+
 
 @app.get("/api/admin/pacientes")
 def listar_todos_los_pacientes(admin: dict = Depends(verificar_admin)):
