@@ -131,6 +131,7 @@ export class LoginComponent {
             id: respuesta.id,
             usuario: respuesta.usuario,
             rol: respuesta.rol,
+            contrasena: datos.contrasena,
           });
           this.router.navigate(['/admin']);
         }

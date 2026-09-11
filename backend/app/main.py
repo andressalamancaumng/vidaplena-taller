@@ -17,11 +17,15 @@ taller.
 from typing import Optional
 from datetime import date, time as time_type
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app import database
+
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+security = HTTPBasic()
 
 app = FastAPI(
     title="VidaPlena API",
@@ -135,12 +139,14 @@ def login_admin(datos: LoginRequest):
 
 @app.get("/api/pacientes/buscar")
 def buscar_paciente(cedula: str):
-    """Búsqueda de un paciente por número de cédula (usada en recepción)."""
+    """Busqueda de un paciente por numero de cedula (usada en recepcion)."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        consulta = f"SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = '{cedula}'"
-        cursor.execute(consulta)
+        cursor.execute(
+            "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s",
+            (cedula,),
+        )
         filas = cursor.fetchall()
         return [fila_a_dict(cursor, f) for f in filas]
     finally:
@@ -232,8 +238,31 @@ def facturas_de_paciente(paciente_id: int):
 # Panel administrativo
 # ---------------------------------------------------------------------------
 
+def verificar_admin(credenciales: HTTPBasicCredentials = Depends(security)):
+    """Valida usuario/contraseña de administrador contra la base de datos
+    antes de dejar pasar a un endpoint protegido."""
+    conexion = database.obtener_conexion()
+    cursor = conexion.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, usuario, rol FROM usuarios_admin WHERE usuario = %s AND contrasena = %s",
+            (credenciales.username, credenciales.password),
+        )
+        fila = cursor.fetchone()
+    finally:
+        cursor.close()
+        conexion.close()
+
+    if not fila:
+        raise HTTPException(
+            status_code=401,
+            detail="Credenciales de administrador inválidas",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+
 @app.get("/api/admin/pacientes")
-def listar_todos_los_pacientes():
+def listar_todos_los_pacientes(admin: dict = Depends(verificar_admin)):
     """
     Vista administrativa: todos los pacientes con su última consulta y
     diagnóstico, pensada para el personal de la clínica.

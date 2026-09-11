@@ -23,6 +23,7 @@ export interface AdminSesion {
   id: number;
   usuario: string;
   rol: string;
+  contrasena: string;
 }
 
 export type Sesion = PacienteSesion | AdminSesion;

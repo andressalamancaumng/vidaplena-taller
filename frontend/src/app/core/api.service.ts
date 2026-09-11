@@ -1,8 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { API_URL } from './api.config';
+import { SessionService } from './session.service';
 
 export interface PacienteRegistro {
   nombre: string;
@@ -28,7 +29,10 @@ export interface CitaCreate {
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
-  constructor(private http: HttpClient) {}
+  constructor(
+    private http: HttpClient,
+    private session: SessionService,
+  ) {}
 
   registrarPaciente(datos: PacienteRegistro): Observable<any> {
     return this.http.post(`${API_URL}/pacientes/registro`, datos);
@@ -63,6 +67,14 @@ export class ApiService {
   }
 
   listarTodosLosPacientesAdmin(): Observable<any[]> {
-    return this.http.get<any[]>(`${API_URL}/admin/pacientes`);
+    const sesion = this.session.obtenerSesion();
+    const credenciales =
+      sesion?.tipo === 'admin' ? btoa(`${sesion.usuario}:${sesion.contrasena}`) : '';
+
+    const headers = new HttpHeaders({
+      Authorization: `Basic ${credenciales}`,
+    });
+
+    return this.http.get<any[]>(`${API_URL}/admin/pacientes`, { headers });
   }
 }
