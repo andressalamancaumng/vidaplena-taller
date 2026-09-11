@@ -3,6 +3,7 @@ import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { API_URL } from './api.config';
+import { SessionService } from './session.service';
 
 export interface PacienteRegistro {
   nombre: string;
@@ -28,7 +29,10 @@ export interface CitaCreate {
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {
-  constructor(private http: HttpClient) {}
+  constructor(
+  private http: HttpClient,
+  private session: SessionService
+) {}
 
   registrarPaciente(datos: PacienteRegistro): Observable<any> {
     return this.http.post(`${API_URL}/pacientes/registro`, datos);
@@ -51,8 +55,22 @@ export class ApiService {
   }
 
   obtenerCitaPorId(id: number): Observable<any> {
-    return this.http.get(`${API_URL}/citas/${id}`);
-  }
+  const sesion = this.session.obtenerSesion();
+
+  const token =
+    sesion?.tipo === 'paciente'
+      ? sesion.token
+      : '';
+
+  return this.http.get(
+    `${API_URL}/citas/${id}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+}
 
   citasDePaciente(pacienteId: number): Observable<any[]> {
     return this.http.get<any[]>(`${API_URL}/citas/paciente/${pacienteId}`);
@@ -63,6 +81,21 @@ export class ApiService {
   }
 
   listarTodosLosPacientesAdmin(): Observable<any[]> {
-    return this.http.get<any[]>(`${API_URL}/admin/pacientes`);
-  }
+  const sesion = this.session.obtenerSesion();
+
+  const token =
+    sesion?.tipo === 'admin'
+      ? sesion.token
+      : '';
+
+  return this.http.get<any[]>(
+    `${API_URL}/admin/pacientes`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
 }
+  }
+

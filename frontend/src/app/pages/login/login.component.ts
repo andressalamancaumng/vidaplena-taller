@@ -119,11 +119,12 @@ export class LoginComponent {
         this.enviando = false;
         if (this.tipoSeleccionado === 'paciente') {
           this.session.guardarSesion({
-            tipo: 'paciente',
-            id: respuesta.id,
-            nombre: respuesta.nombre,
-            cedula: respuesta.cedula,
-          });
+  tipo: 'paciente',
+  id: respuesta.id,
+  nombre: respuesta.nombre,
+  cedula: respuesta.cedula,
+  token: respuesta.token,
+});
           this.router.navigate(['/citas']);
         } else {
           this.session.guardarSesion({
@@ -131,6 +132,7 @@ export class LoginComponent {
             id: respuesta.id,
             usuario: respuesta.usuario,
             rol: respuesta.rol,
+            token: respuesta.token,
           });
           this.router.navigate(['/admin']);
         }
