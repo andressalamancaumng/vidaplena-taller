@@ -123,6 +123,7 @@ export class LoginComponent {
             id: respuesta.id,
             nombre: respuesta.nombre,
             cedula: respuesta.cedula,
+            token: respuesta.token,
           });
           this.router.navigate(['/citas']);
         } else {
@@ -131,6 +132,7 @@ export class LoginComponent {
             id: respuesta.id,
             usuario: respuesta.usuario,
             rol: respuesta.rol,
+            token: respuesta.token,
           });
           this.router.navigate(['/admin']);
         }

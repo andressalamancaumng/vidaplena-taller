@@ -29,6 +29,14 @@ services:
       DB_USER: vidaplena_app
       DB_PASSWORD: vidaplena_app_pw
       DB_NAME: vidaplena
+      # Hallazgo 5 — llave de cifrado a nivel de aplicación (Fernet).
+      # Gestión de la llave: vive SOLO como variable de entorno, nunca
+      # escrita en el código Python ni en el repositorio de git en un
+      # proyecto real (en producción iría en un gestor de secretos como
+      # AWS Secrets Manager o Vault). Aquí, para el taller, se deja visible
+      # en este archivo por simplicidad pedagógica — mencionen esta
+      # diferencia en el documento IEEE.
+      CIFRADO_KEY: "s3DwW85ITAB7OVbY2vFafOa4yjLia7McxSsXkMbNNzo="
     ports:
       - "8000:8000"
     depends_on:

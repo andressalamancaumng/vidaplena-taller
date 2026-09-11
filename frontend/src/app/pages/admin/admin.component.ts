@@ -58,6 +58,7 @@ export class AdminComponent implements OnInit {
   ngOnInit(): void {
     const sesion = this.session.obtenerSesion();
     this.usuario = sesion?.tipo === 'admin' ? sesion.usuario : '';
-    this.api.listarTodosLosPacientesAdmin().subscribe((datos) => (this.pacientes = datos));
+    const token = sesion?.tipo === 'admin' ? sesion.token : '';
+    this.api.listarTodosLosPacientesAdmin(token).subscribe((datos) => (this.pacientes = datos));
   }
 }

@@ -128,7 +128,7 @@ import { SessionService } from '../../core/session.service';
   `,
 })
 export class CitasComponent implements OnInit {
-  sesionPaciente: { id: number; nombre: string; cedula: string } | null = null;
+  sesionPaciente: { id: number; nombre: string; cedula: string; token: string } | null = null;
   misCitas: any[] = [];
 
   private fb = inject(FormBuilder);
@@ -194,10 +194,10 @@ export class CitasComponent implements OnInit {
   }
 
   consultarCita(): void {
-    if (!this.citaIdConsulta) return;
+    if (!this.citaIdConsulta || !this.sesionPaciente) return;
     this.errorConsulta = '';
     this.citaConsultada = null;
-    this.api.obtenerCitaPorId(this.citaIdConsulta).subscribe({
+    this.api.obtenerCitaPorId(this.citaIdConsulta, this.sesionPaciente.token).subscribe({
       next: (datos) => (this.citaConsultada = datos),
       error: (err) => (this.errorConsulta = err?.error?.detail ?? 'No se pudo consultar la cita.'),
     });
