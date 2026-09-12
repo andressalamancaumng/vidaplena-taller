@@ -26,6 +26,13 @@ from app import database
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import bcrypt
 
+import hashlib
+from cryptography.fernet import Fernet
+import os
+
+FERNET_KEY = os.getenv("FERNET_KEY")
+_cipher = Fernet(FERNET_KEY.encode("utf-8"))
+
 security = HTTPBasic()
 
 app = FastAPI(
@@ -44,6 +51,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Cifrado
+# ---------------------------------------------------------------------------
+
+
+def cifrar_dato(dato_plano: str) -> str:
+    """Cifra un dato sensible (reversible) antes de guardarlo en la base de datos."""
+    return _cipher.encrypt(dato_plano.encode("utf-8")).decode("utf-8")
+
+
+def descifrar_dato(dato_cifrado: str) -> str:
+    """Descifra un dato previamente cifrado con cifrar_dato, para mostrarlo a un usuario autorizado."""
+    return _cipher.decrypt(dato_cifrado.encode("utf-8")).decode("utf-8")
+
+
+def hash_busqueda(dato_plano: str) -> str:
+    """Hash determinístico (SHA-256, no reversible) usado solo para poder buscar por
+    igualdad, ya que el cifrado Fernet no es determinístico y no permite comparar
+    directamente en una cláusula WHERE."""
+    return hashlib.sha256(dato_plano.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +136,12 @@ def registrar_paciente(datos: PacienteRegistro):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
-            "VALUES (%s, %s, %s, %s, %s)",
+            "INSERT INTO pacientes (nombre, cedula, cedula_hash, telefono, correo, contrasena) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
             (
                 datos.nombre,
-                datos.cedula,
+                cifrar_dato(datos.cedula),
+                hash_busqueda(datos.cedula),
                 datos.telefono,
                 datos.correo,
                 hashear_contrasena(datos.contrasena),
@@ -131,13 +160,13 @@ def login_paciente(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
-            (datos.identificador,),
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula_hash = %s",
+            (hash_busqueda(datos.identificador),),
         )
         fila = cursor.fetchone()
         if not fila or not verificar_contrasena(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+        return {"id": fila[0], "nombre": fila[1], "cedula": descifrar_dato(fila[2])}
     finally:
         cursor.close()
         conexion.close()
@@ -168,11 +197,16 @@ def buscar_paciente(cedula: str):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s",
-            (cedula,),
+            "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula_hash = %s",
+            (hash_busqueda(cedula),),
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultado = []
+        for f in filas:
+            fila_dict = fila_a_dict(cursor, f)
+            fila_dict["cedula"] = descifrar_dato(fila_dict["cedula"])
+            resultado.append(fila_dict)
+        return resultado
     finally:
         cursor.close()
         conexion.close()
@@ -197,7 +231,7 @@ def crear_cita(datos: CitaCreate):
                 datos.hora,
                 datos.medico,
                 datos.motivo_consulta,
-                datos.diagnostico,
+                cifrar_dato(datos.diagnostico) if datos.diagnostico else None,
             ),
         )
         conexion.commit()
@@ -212,8 +246,8 @@ def verificar_paciente(credenciales: HTTPBasicCredentials = Depends(security)):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
-            (credenciales.username,),
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula_hash = %s",
+            (hash_busqueda(credenciales.username),),
         )
         fila = cursor.fetchone()
     finally:
@@ -226,7 +260,7 @@ def verificar_paciente(credenciales: HTTPBasicCredentials = Depends(security)):
             detail="Credenciales de paciente inválidas",
             headers={"WWW-Authenticate": "Basic"},
         )
-    return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+    return {"id": fila[0], "nombre": fila[1], "cedula": descifrar_dato(fila[2])}
 
 
 @app.get("/api/citas/{cita_id}")
@@ -247,11 +281,10 @@ def obtener_cita(cita_id: int, paciente: dict = Depends(verificar_paciente)):
             raise HTTPException(status_code=404, detail="Cita no encontrada")
 
         cita = fila_a_dict(cursor, fila)
+        if cita.get("diagnostico"):
+            cita["diagnostico"] = descifrar_dato(cita["diagnostico"])
         if cita["paciente_id"] != paciente["id"]:
-            raise HTTPException(
-                status_code=403, detail="No tiene permiso para consultar esta cita"
-            )
-
+            raise HTTPException(status_code=403, detail="No tiene permiso para consultar esta cita")
         return cita
     finally:
         cursor.close()
@@ -341,7 +374,14 @@ def listar_todos_los_pacientes(admin: dict = Depends(verificar_admin)):
             "ORDER BY p.id"
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultado = []
+        for f in filas:
+            fila_dict = fila_a_dict(cursor, f)
+            fila_dict["cedula"] = descifrar_dato(fila_dict["cedula"])
+            if fila_dict.get("diagnostico"):
+                fila_dict["diagnostico"] = descifrar_dato(fila_dict["diagnostico"])
+            resultado.append(fila_dict)
+        return resultado
     finally:
         cursor.close()
         conexion.close()
