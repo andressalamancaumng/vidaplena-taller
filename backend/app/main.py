@@ -187,7 +187,7 @@ def crear_cita(datos: CitaCreate):
             "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
-             datos.motivo_consulta, datos.diagnostico),
+             datos.motivo_consulta, database.cifrar(datos.diagnostico)),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Cita creada"}
@@ -214,7 +214,9 @@ def obtener_cita(cita_id: int, sesion: dict = Depends(verificar_token)):
             raise HTTPException(status_code=404, detail="Cita no encontrada")
         if sesion.get("tipo") != "admin" and sesion.get("sub") != str(fila[1]):
             raise HTTPException(status_code=403, detail="No puede ver la cita de otro paciente")
-        return fila_a_dict(cursor, fila)
+        resultado = fila_a_dict(cursor, fila)
+        resultado["diagnostico"] = database.descifrar(resultado["diagnostico"])
+        return resultado
     finally:
         cursor.close()
         conexion.close()
@@ -283,7 +285,10 @@ def listar_todos_los_pacientes(sesion: dict = Depends(verificar_token)):
             "ORDER BY p.id"
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultados = [fila_a_dict(cursor, f) for f in filas]
+        for r in resultados:
+            r["diagnostico"] = database.descifrar(r["diagnostico"])
+        return resultados
     finally:
         cursor.close()
         conexion.close()

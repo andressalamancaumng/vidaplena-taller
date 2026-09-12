@@ -29,6 +29,7 @@ services:
       DB_USER: vidaplena_app
       DB_PASSWORD: vidaplena_app_pw
       DB_NAME: vidaplena
+      ENCRYPTION_KEY: "yMLx4FhyIb-Xxqf2Qqqt7qoHvGS58Nq444aZMYuth6k="
     ports:
       - "8000:8000"
     depends_on:

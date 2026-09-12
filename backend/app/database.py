@@ -12,6 +12,7 @@ import time
 
 import mysql.connector
 from mysql.connector import Error as MySQLError
+from cryptography.fernet import Fernet
 
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
@@ -51,3 +52,21 @@ def obtener_conexion():
     raise RuntimeError(
         f"No fue posible conectar a MySQL tras {MAX_REINTENTOS} intentos: {ultimo_error}"
     )
+
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+_fernet = Fernet(ENCRYPTION_KEY.encode()) if ENCRYPTION_KEY else None
+
+
+def cifrar(texto: str) -> str:
+    if texto is None or _fernet is None:
+        return texto
+    return _fernet.encrypt(texto.encode()).decode()
+
+
+def descifrar(texto: str) -> str:
+    if texto is None or _fernet is None:
+        return texto
+    try:
+        return _fernet.decrypt(texto.encode()).decode()
+    except Exception:
+        return texto
