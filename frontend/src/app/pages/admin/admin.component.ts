@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 
 import { CardModule } from 'primeng/card';
 import { TableModule } from 'primeng/table';
-import { TagModule } from 'primeng/tag';
+import { MessageModule } from 'primeng/message';
 
 import { ApiService } from '../../core/api.service';
 import { SessionService } from '../../core/session.service';
@@ -11,7 +11,7 @@ import { SessionService } from '../../core/session.service';
 @Component({
   selector: 'app-admin',
   standalone: true,
-  imports: [CommonModule, CardModule, TableModule, TagModule],
+  imports: [CommonModule, CardModule, TableModule, MessageModule],
   template: `
     <div class="vp-contenido">
       <div class="vp-alerta-admin">
@@ -21,6 +21,7 @@ import { SessionService } from '../../core/session.service';
       </div>
 
       <p-card header="Todos los pacientes y su última consulta">
+        <p-message *ngIf="error" severity="error" [text]="error"></p-message>
         <p-table [value]="pacientes" [tableStyle]="{ 'min-width': '50rem' }" [paginator]="true" [rows]="10">
           <ng-template pTemplate="header">
             <tr>
@@ -52,12 +53,19 @@ import { SessionService } from '../../core/session.service';
 export class AdminComponent implements OnInit {
   pacientes: any[] = [];
   usuario = '';
+  error = '';
 
   constructor(private api: ApiService, private session: SessionService) {}
 
   ngOnInit(): void {
     const sesion = this.session.obtenerSesion();
     this.usuario = sesion?.tipo === 'admin' ? sesion.usuario : '';
-    this.api.listarTodosLosPacientesAdmin().subscribe((datos) => (this.pacientes = datos));
+    this.api.listarTodosLosPacientesAdmin().subscribe({
+      next: (datos) => (this.pacientes = datos),
+      error: (err) => {
+        this.pacientes = [];
+        this.error = err?.error?.detail ?? 'No se pudieron cargar los pacientes.';
+      },
+    });
   }
 }
