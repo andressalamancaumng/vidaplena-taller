@@ -3,23 +3,18 @@ VidaPlena — API de la Red de Clínicas (aplicación del taller)
 ----------------------------------------------------------------
 Seguridad Informática — Ingeniería Multimedia, UMNG — Sesión 7
 
-Esta API gestiona pacientes, citas y facturas de una red de clínicas
-FICTICIA. Es la aplicación "insegura" del taller: contiene fallas de
-seguridad de datos sembradas a propósito para que ustedes las encuentren
-y las corrijan (ver la Guía del Taller en docs/).
-
-No es necesario (ni se espera) que memoricen este archivo antes de
-empezar: la idea es que lo exploren, lo prueben desde el navegador o con
-curl/Postman, y vayan identificando qué está mal a medida que avanza el
-taller.
+Versión CORREGIDA: los 5 hallazgos de seguridad ya están solucionados.
 """
 
 from typing import Optional
 from datetime import date, time as time_type
 import secrets
+
 from fastapi import Header, FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import bcrypt
+from cryptography.fernet import Fernet
 
 from app import database
 
@@ -29,9 +24,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS abierto a propósito para simplificar el taller (el frontend Angular
-# corre en un puerto distinto al backend). Esto no es una de las fallas
-# que se pide corregir, pero en un sistema real tampoco se dejaría así.
+# CORS abierto a propósito para simplificar el taller.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,6 +32,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Tokens de sesión (Hallazgos 2 y 3)
+# ---------------------------------------------------------------------------
+tokens_pacientes = {}
+tokens_admin = {}
+
+# ---------------------------------------------------------------------------
+# Cifrado Fernet (Hallazgo 5)
+# ---------------------------------------------------------------------------
+CLAVE_CIFRADO = b'4kL9pXz2Vb8sQ1rT6yU3wA7cE0mN5hJ8oI2dF4gK9qY='
+cifrador = Fernet(CLAVE_CIFRADO)
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +90,12 @@ def registrar_paciente(datos: PacienteRegistro):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
+        contrasena_hash = bcrypt.hashpw(datos.contrasena.encode('utf-8'), bcrypt.gensalt())
+        cedula_cifrada = cifrador.encrypt(datos.cedula.encode()).decode()
         cursor.execute(
             "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
             "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, datos.contrasena),
+            (datos.nombre, cedula_cifrada, datos.telefono, datos.correo, contrasena_hash),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -99,17 +106,37 @@ def registrar_paciente(datos: PacienteRegistro):
 
 @app.post("/api/login/paciente")
 def login_paciente(datos: LoginRequest):
+    """
+    Ya no se puede buscar con WHERE cedula = %s porque la cédula está
+    cifrada (Fernet genera un resultado distinto cada vez, aunque el
+    texto original sea el mismo). Por eso se trae todo y se compara
+    la cédula ya descifrada en Python.
+    """
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        cursor.execute(
-            "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
-        )
-        fila = cursor.fetchone()
-        if not fila:
+        cursor.execute("SELECT id, nombre, cedula, contrasena FROM pacientes")
+        paciente_encontrado = None
+        for fila in cursor.fetchall():
+            cedula_descifrada = cifrador.decrypt(fila[2].encode()).decode()
+            if cedula_descifrada == datos.identificador:
+                paciente_encontrado = fila
+                break
+
+        if not paciente_encontrado:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+
+        if not bcrypt.checkpw(datos.contrasena.encode('utf-8'), paciente_encontrado[3].encode('utf-8')):
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+        Token_Paciente = secrets.token_hex(16)
+        tokens_pacientes[Token_Paciente] = paciente_encontrado[0]
+        return {
+            "id": paciente_encontrado[0],
+            "nombre": paciente_encontrado[1],
+            "cedula": datos.identificador,
+            "token": Token_Paciente,
+        }
     finally:
         cursor.close()
         conexion.close()
@@ -127,7 +154,9 @@ def login_admin(datos: LoginRequest):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+        Gen_Token = secrets.token_hex(16)
+        tokens_admin[Gen_Token] = fila[0]
+        return {"id": fila[0], "usuario": fila[1], "rol": fila[2], "token": Gen_Token}
     finally:
         cursor.close()
         conexion.close()
@@ -139,10 +168,15 @@ def buscar_paciente(cedula: str):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        consulta = "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s"
-        cursor.execute(consulta, (cedula,))
-        filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        cursor.execute("SELECT id, nombre, cedula, telefono, correo FROM pacientes")
+        resultado = []
+        for fila in cursor.fetchall():
+            cedula_descifrada = cifrador.decrypt(fila[2].encode()).decode()
+            if cedula_descifrada == cedula:
+                dic = fila_a_dict(cursor, fila)
+                dic["cedula"] = cedula_descifrada
+                resultado.append(dic)
+        return resultado
     finally:
         cursor.close()
         conexion.close()
@@ -157,11 +191,15 @@ def crear_cita(datos: CitaCreate):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
+        diagnostico_cifrado = (
+            cifrador.encrypt(datos.diagnostico.encode()).decode()
+            if datos.diagnostico else None
+        )
         cursor.execute(
             "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
-             datos.motivo_consulta, datos.diagnostico),
+             datos.motivo_consulta, diagnostico_cifrado),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Cita creada"}
@@ -171,7 +209,7 @@ def crear_cita(datos: CitaCreate):
 
 
 @app.get("/api/citas/{cita_id}")
-def obtener_cita(cita_id: int):
+def obtener_cita(cita_id: int, authorization: str = Header(None)):
     """Detalle completo de una cita, incluido el diagnóstico."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
@@ -186,7 +224,14 @@ def obtener_cita(cita_id: int):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=404, detail="Cita no encontrada")
-        return fila_a_dict(cursor, fila)
+
+        if authorization not in tokens_pacientes or tokens_pacientes[authorization] != fila[1]:
+            raise HTTPException(status_code=401, detail="Acceso denegado")
+
+        resultado = fila_a_dict(cursor, fila)
+        if resultado.get("diagnostico"):
+            resultado["diagnostico"] = cifrador.decrypt(resultado["diagnostico"].encode()).decode()
+        return resultado
     finally:
         cursor.close()
         conexion.close()
@@ -194,6 +239,7 @@ def obtener_cita(cita_id: int):
 
 @app.get("/api/citas/paciente/{paciente_id}")
 def citas_de_paciente(paciente_id: int):
+    """No trae diagnostico, así que no necesita descifrado."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -232,14 +278,13 @@ def facturas_de_paciente(paciente_id: int):
 # Panel administrativo
 # ---------------------------------------------------------------------------
 
-
-def verificar_admin(authorization: str = Header("Clave-secreta-admin")):
-    if authorization != "Clave-secreta-admin":
+def verificar_admin(authorization: str = Header(None)):
+    if authorization not in tokens_admin:
         raise HTTPException(status_code=401, detail="Acceso denegado")
-    pass
+
 
 @app.get("/api/admin/pacientes")
-def listar_todos_los_pacientes(dependencies= Depends(verificar_admin)):
+def listar_todos_los_pacientes(dependencies=Depends(verificar_admin)):
     """
     Vista administrativa: todos los pacientes con su última consulta y
     diagnóstico, pensada para el personal de la clínica.
@@ -254,8 +299,14 @@ def listar_todos_los_pacientes(dependencies= Depends(verificar_admin)):
             "LEFT JOIN citas c ON c.paciente_id = p.id "
             "ORDER BY p.id"
         )
-        filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultado = []
+        for f in cursor.fetchall():
+            dic = fila_a_dict(cursor, f)
+            dic["cedula"] = cifrador.decrypt(dic["cedula"].encode()).decode()
+            if dic.get("diagnostico"):
+                dic["diagnostico"] = cifrador.decrypt(dic["diagnostico"].encode()).decode()
+            resultado.append(dic)
+        return resultado
     finally:
         cursor.close()
         conexion.close()
