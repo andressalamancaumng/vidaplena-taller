@@ -19,6 +19,7 @@ from datetime import date, time as time_type, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Depends, Header
 import jwt
+from passlib.context import CryptContext
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -33,6 +34,7 @@ app = FastAPI(
 SECRET_KEY = "cambia-esta-clave-por-una-variable-de-entorno-en-produccion"
 ALGORITHM = "HS256"
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def crear_token(datos: dict) -> str:
     payload = datos.copy()
@@ -110,7 +112,7 @@ def registrar_paciente(datos: PacienteRegistro):
         cursor.execute(
             "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
             "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, datos.contrasena),
+            (datos.nombre, datos.cedula, datos.telefono, datos.correo, pwd_context.hash(datos.contrasena)),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -125,11 +127,11 @@ def login_paciente(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not pwd_context.verify(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = crear_token({"sub": str(fila[0]), "tipo": "paciente"})
         return {"id": fila[0], "nombre": fila[1], "cedula": fila[2], "token": token}
@@ -144,11 +146,11 @@ def login_admin(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, usuario, rol FROM usuarios_admin WHERE usuario = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, usuario, rol, contrasena FROM usuarios_admin WHERE usuario = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not pwd_context.verify(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = crear_token({"sub": str(fila[0]), "tipo": "admin"})
         return {"id": fila[0], "usuario": fila[1], "rol": fila[2], "token": token}
