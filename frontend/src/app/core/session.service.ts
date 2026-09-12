@@ -3,12 +3,12 @@ import { Injectable } from '@angular/core';
 /**
  * Manejo de "sesión" en el cliente.
  *
- * ⚠️ Nota pedagógica: esto es deliberadamente simple. Guardamos los datos
- * del paciente/administrador que inició sesión en localStorage, pero el
- * backend (ver /api/admin/pacientes en la API) NO verifica en absoluto que
- * quien llama esté autenticado. Es decir: esta "sesión" solo sirve para que
- * la interfaz muestre u oculte botones — no protege realmente los datos.
- * Encontrar y corregir esa diferencia es parte del taller.
+ * SOLUCIÓN DE REFERENCIA: además de guardar los datos del paciente/
+ * administrador para la interfaz (mostrar u ocultar botones), ahora se
+ * guarda el JWT (`token`) emitido por el backend en el login. Ese token es
+ * el que realmente autentica cada solicitud (ver auth.interceptor.ts): el
+ * backend ahora SÍ verifica la sesión en cada endpoint sensible, en lugar
+ * de confiar únicamente en lo que el cliente afirma tener guardado.
  */
 
 export interface PacienteSesion {
@@ -16,6 +16,7 @@ export interface PacienteSesion {
   id: number;
   nombre: string;
   cedula: string;
+  token: string;
 }
 
 export interface AdminSesion {
@@ -23,6 +24,7 @@ export interface AdminSesion {
   id: number;
   usuario: string;
   rol: string;
+  token: string;
 }
 
 export type Sesion = PacienteSesion | AdminSesion;
@@ -38,6 +40,10 @@ export class SessionService {
   obtenerSesion(): Sesion | null {
     const crudo = localStorage.getItem(CLAVE_STORAGE);
     return crudo ? (JSON.parse(crudo) as Sesion) : null;
+  }
+
+  obtenerToken(): string | null {
+    return this.obtenerSesion()?.token ?? null;
   }
 
   esAdmin(): boolean {
