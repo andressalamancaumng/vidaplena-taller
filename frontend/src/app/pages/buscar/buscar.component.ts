@@ -19,7 +19,7 @@ import { ApiService } from '../../core/api.service';
       <p-card header="Recepción — buscar paciente por cédula">
         <p class="vp-ayuda">
           Este formulario simula el que usaría el personal de recepción de la clínica para
-          ubicar rápidamente a un paciente que llega a su cita.
+          ubicar rápidamente a un paciente que llega a su cita. Requiere iniciar sesión como administrador.
         </p>
         <div class="vp-form-fila">
           <div class="vp-form-campo" style="flex: 2;">
@@ -76,6 +76,7 @@ export class BuscarComponent {
     }
     this.cargando = true;
     this.error = '';
+    this.resultados = [];
     this.api.buscarPacientePorCedula(this.cedula).subscribe({
       next: (datos) => {
         this.resultados = datos;
