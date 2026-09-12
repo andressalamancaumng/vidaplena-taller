@@ -24,6 +24,8 @@ from passlib.context import CryptContext
 
 from app import database
 
+from app.crypto_utils import cifrar, descifrar
+
 
 
 app = FastAPI(
@@ -96,9 +98,9 @@ def registrar_paciente(datos: PacienteRegistro):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, pwd_context.hash(datos.contrasena)),
+        "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (datos.nombre, cifrar(datos.cedula), datos.telefono, datos.correo, pwd_context.hash(datos.contrasena)),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -106,20 +108,17 @@ def registrar_paciente(datos: PacienteRegistro):
         cursor.close()
         conexion.close()
 
-
 @app.post("/api/login/paciente")
 def login_paciente(datos: LoginRequest):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        cursor.execute(
-            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
-            (datos.identificador,),
-        )
-        fila = cursor.fetchone()
+        cursor.execute("SELECT id, nombre, cedula, contrasena FROM pacientes")
+        filas = cursor.fetchall()
+        fila = next((f for f in filas if descifrar(f[2]) == datos.identificador), None)
         if not fila or not pwd_context.verify(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+        return {"id": fila[0], "nombre": fila[1], "cedula": descifrar(fila[2])}
     finally:
         cursor.close()
         conexion.close()
@@ -144,18 +143,21 @@ def login_admin(datos: LoginRequest):
 
 @app.get("/api/pacientes/buscar")
 def buscar_paciente(cedula: str):
-    """Búsqueda de un paciente por número de cédula (usada en recepción)."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        consulta = "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s"
-        cursor.execute(consulta, (cedula,))
+        cursor.execute("SELECT id, nombre, cedula, telefono, correo FROM pacientes")
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultado = []
+        for f in filas:
+            fila_dict = fila_a_dict(cursor, f)
+            fila_dict["cedula"] = descifrar(fila_dict["cedula"])
+            if fila_dict["cedula"] == cedula:
+                resultado.append(fila_dict)
+        return resultado
     finally:
         cursor.close()
         conexion.close()
-
 
 # ---------------------------------------------------------------------------
 # Citas
@@ -167,10 +169,10 @@ def crear_cita(datos: CitaCreate):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
-             datos.motivo_consulta, datos.diagnostico),
+        "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
+        datos.motivo_consulta, cifrar(datos.diagnostico)),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Cita creada"}
@@ -197,6 +199,8 @@ def obtener_cita(cita_id: int, cedula_solicitante: str):
             raise HTTPException(status_code=404, detail="Cita no encontrada")
 
         datos = fila_a_dict(cursor, fila)
+        datos["cedula"] = descifrar(datos["cedula"])
+        datos["diagnostico"] = descifrar(datos["diagnostico"])
         if datos["cedula"] != cedula_solicitante:
             raise HTTPException(status_code=403, detail="No autorizado para ver esta cita")
 
@@ -263,7 +267,11 @@ def listar_todos_los_pacientes(admin: None = Depends(verificar_admin)):
             "ORDER BY p.id"
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultados = [fila_a_dict(cursor, f) for f in filas]
+        for r in resultados:
+            r["cedula"] = descifrar(r["cedula"])
+            r["diagnostico"] = descifrar(r["diagnostico"])
+        return resultados
     finally:
         cursor.close()
         conexion.close()

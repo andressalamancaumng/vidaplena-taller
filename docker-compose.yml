@@ -29,6 +29,7 @@ services:
       DB_USER: vidaplena_app
       DB_PASSWORD: vidaplena_app_pw
       DB_NAME: vidaplena
+      FERNET_KEY: "J96AwM0yCCchwwMeoF2IkvGBvFjlawORmuzKFaPwa8g="
     ports:
       - "8000:8000"
     depends_on:
