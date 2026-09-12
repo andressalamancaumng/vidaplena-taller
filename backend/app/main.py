@@ -25,6 +25,10 @@ from pydantic import BaseModel
 
 from app import database
 
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import base64
+
 app = FastAPI(
     title="VidaPlena API",
     description="Red de Clínicas VidaPlena — aplicación del taller de Seguridad de Datos (UMNG).",
@@ -60,6 +64,29 @@ def verificar_admin(token: str = Depends(oauth2_scheme)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     return token
+
+# Configuración de cifrado AES (Modo ECB para búsquedas exactas)
+CLAVE_AES = b'12345678901234567890123456789012'
+
+def cifrar(texto: str) -> str:
+    if not texto: return texto
+    pad_len = 16 - (len(texto) % 16)
+    texto_pad = texto + (chr(pad_len) * pad_len)
+    cipher = Cipher(algorithms.AES(CLAVE_AES), modes.ECB(), backend=default_backend())
+    encryptor = cipher.encryptor()
+    cifrado = encryptor.update(texto_pad.encode()) + encryptor.finalize()
+    return base64.b64encode(cifrado).decode()
+
+def descifrar(texto_cifrado: str) -> str:
+    if not texto_cifrado: return texto_cifrado
+    try:
+        cipher = Cipher(algorithms.AES(CLAVE_AES), modes.ECB(), backend=default_backend())
+        decryptor = cipher.decryptor()
+        texto_pad = decryptor.update(base64.b64decode(texto_cifrado)) + decryptor.finalize()
+        pad_len = texto_pad[-1]
+        return texto_pad[:-pad_len].decode()
+    except:
+        return texto_cifrado
 
 # ---------------------------------------------------------------------------
 # Modelos de entrada
@@ -105,10 +132,11 @@ def registrar_paciente(datos: PacienteRegistro):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
+        cedula_cifrada = cifrar(datos.cedula)
         cursor.execute(
             "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
             "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, datos.contrasena),
+            (datos.nombre, cedula_cifrada, datos.telefono, datos.correo, datos.contrasena),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -122,14 +150,15 @@ def login_paciente(datos: LoginRequest):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
+        identificador_cifrado = cifrar(datos.identificador)
         cursor.execute(
             "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            (identificador_cifrado, datos.contrasena),
         )
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+        return {"id": fila[0], "nombre": fila[1], "cedula": descifrar(fila[2])}
     finally:
         cursor.close()
         conexion.close()
@@ -166,10 +195,16 @@ def buscar_paciente(cedula: str):
     cursor = conexion.cursor()
     try:
         # Modificación %s para parametrizar la busqueda
+        cedula_cifrada = cifrar(cedula)
         consulta = "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = %s"
-        cursor.execute(consulta, (cedula,))
+        cursor.execute(consulta, (cedula_cifrada,))
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultados = []
+        for f in filas:
+            dic = fila_a_dict(cursor, f)
+            dic["cedula"] = descifrar(dic["cedula"])
+            resultados.append(dic)
+        return resultados
     finally:
         cursor.close()
         conexion.close()
@@ -184,11 +219,12 @@ def crear_cita(datos: CitaCreate):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
+        diagnostico_cifrado = cifrar(datos.diagnostico)
         cursor.execute(
             "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
-             datos.motivo_consulta, datos.diagnostico),
+             datos.motivo_consulta, diagnostico_cifrado),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Cita creada"}
@@ -213,7 +249,11 @@ def obtener_cita(cita_id: int):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=404, detail="Cita no encontrada")
-        return fila_a_dict(cursor, fila)
+
+        dic = fila_a_dict(cursor, fila)
+        if dic.get("diagnostico"):
+            dic["diagnostico"] = descifrar(dic["diagnostico"])
+        return dic
     finally:
         cursor.close()
         conexion.close()
@@ -276,7 +316,16 @@ def listar_todos_los_pacientes():
             "ORDER BY p.id"
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        # Iterar sobre todas las filas y descifrar los campos confidenciales
+        resultados = []
+        for f in filas:
+            dic = fila_a_dict(cursor, f)
+            if dic.get("cedula"):
+                dic["cedula"] = descifrar(dic["cedula"])
+            if dic.get("diagnostico"):
+                dic["diagnostico"] = descifrar(dic["diagnostico"])
+            resultados.append(dic)
+        return resultados
     finally:
         cursor.close()
         conexion.close()
