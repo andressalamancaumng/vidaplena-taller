@@ -16,8 +16,8 @@ taller.
 
 from typing import Optional
 from datetime import date, time as time_type
-
-from fastapi import FastAPI, HTTPException
+import secrets
+from fastapi import Header, FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -232,8 +232,14 @@ def facturas_de_paciente(paciente_id: int):
 # Panel administrativo
 # ---------------------------------------------------------------------------
 
+
+def verificar_admin(authorization: str = Header("Clave-secreta-admin")):
+    if authorization != "Clave-secreta-admin":
+        raise HTTPException(status_code=401, detail="Acceso denegado")
+    pass
+
 @app.get("/api/admin/pacientes")
-def listar_todos_los_pacientes():
+def listar_todos_los_pacientes(dependencies= Depends(verificar_admin)):
     """
     Vista administrativa: todos los pacientes con su última consulta y
     diagnóstico, pensada para el personal de la clínica.
