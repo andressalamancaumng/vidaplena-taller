@@ -29,6 +29,9 @@ services:
       DB_USER: vidaplena_app
       DB_PASSWORD: vidaplena_app_pw
       DB_NAME: vidaplena
+      APP_SECRET_KEY: vidaplena-jwt-secret-demo-cambiar-en-produccion
+      APP_ENCRYPTION_KEY: vidaplena-taller-clave-demo-32b!
+      APP_HMAC_KEY: vidaplena-hmac-key-demo-cambiar
     ports:
       - "8000:8000"
     depends_on:
