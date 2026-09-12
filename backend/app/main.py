@@ -210,6 +210,8 @@ def obtener_cita(cita_id: int, sesion: dict = Depends(verificar_token)):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=404, detail="Cita no encontrada")
+        if sesion.get("tipo") != "admin" and sesion.get("sub") != str(fila[1]):
+            raise HTTPException(status_code=403, detail="No puede ver la cita de otro paciente")
         return fila_a_dict(cursor, fila)
     finally:
         cursor.close()
@@ -218,6 +220,8 @@ def obtener_cita(cita_id: int, sesion: dict = Depends(verificar_token)):
 
 @app.get("/api/citas/paciente/{paciente_id}")
 def citas_de_paciente(paciente_id: int, sesion: dict = Depends(verificar_token)):
+    if sesion.get("tipo") != "admin" and sesion.get("sub") != str(paciente_id):
+        raise HTTPException(status_code=403, detail="No puede ver citas de otro paciente")
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -238,6 +242,8 @@ def citas_de_paciente(paciente_id: int, sesion: dict = Depends(verificar_token))
 
 @app.get("/api/facturas/paciente/{paciente_id}")
 def facturas_de_paciente(paciente_id: int, sesion: dict = Depends(verificar_token)):
+    if sesion.get("tipo") != "admin" and sesion.get("sub") != str(paciente_id):
+        raise HTTPException(status_code=403, detail="No puede ver facturas de otro paciente")
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
