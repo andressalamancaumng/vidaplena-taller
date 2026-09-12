@@ -267,7 +267,47 @@ def buscar_paciente(cedula: str):
 
 # ---------------------------------------------------------------------------
 # MIGRACIÓN TEMPORAL
+@app.post("/api/migrar-contrasenas")
+def migrar_contrasenas():
+    conexion = database.obtener_conexion()
+    cursor = conexion.cursor()
 
+    try:
+        cursor.execute(
+            "SELECT id, contrasena FROM pacientes"
+        )
+
+        pacientes = cursor.fetchall()
+
+        for paciente in pacientes:
+            nuevo_hash = generar_hash(paciente[1])
+
+            cursor.execute(
+                "UPDATE pacientes SET contrasena = %s WHERE id = %s",
+                (nuevo_hash, paciente[0])
+            )
+
+        cursor.execute(
+            "SELECT id, contrasena FROM usuarios_admin"
+        )
+
+        administradores = cursor.fetchall()
+
+        for administrador in administradores:
+            nuevo_hash = generar_hash(administrador[1])
+
+            cursor.execute(
+                "UPDATE usuarios_admin SET contrasena = %s WHERE id = %s",
+                (nuevo_hash, administrador[0])
+            )
+
+        conexion.commit()
+
+        return {"mensaje": "Contraseñas migradas correctamente"}
+
+    finally:
+        cursor.close()
+        conexion.close()
 
 # ---------------------------------------------------------------------------
 # Citas
