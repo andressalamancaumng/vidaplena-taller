@@ -42,6 +42,10 @@ export class ApiService {
     return this.http.post(`${API_URL}/login/admin`, datos);
   }
 
+  cerrarSesion(): Observable<unknown> {
+    return this.http.post(`${API_URL}/logout`, {});
+  }
+
   buscarPacientePorCedula(cedula: string): Observable<any[]> {
     return this.http.get<any[]>(`${API_URL}/pacientes/buscar`, { params: { cedula } });
   }

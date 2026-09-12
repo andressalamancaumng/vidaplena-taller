@@ -1,24 +1,19 @@
 import { Injectable } from '@angular/core';
 
-/**
- * Manejo de "sesión" en el cliente.
- *
- * ⚠️ Nota pedagógica: esto es deliberadamente simple. Guardamos los datos
- * del paciente/administrador que inició sesión en localStorage, pero el
- * backend (ver /api/admin/pacientes en la API) NO verifica en absoluto que
- * quien llama esté autenticado. Es decir: esta "sesión" solo sirve para que
- * la interfaz muestre u oculte botones — no protege realmente los datos.
- * Encontrar y corregir esa diferencia es parte del taller.
- */
+/** Estado en memoria: el servidor verifica el JWT y los permisos en cada petición. */
+interface TokenSesion {
+  access_token: string;
+  expira_en: number;
+}
 
-export interface PacienteSesion {
+export interface PacienteSesion extends TokenSesion {
   tipo: 'paciente';
   id: number;
   nombre: string;
   cedula: string;
 }
 
-export interface AdminSesion {
+export interface AdminSesion extends TokenSesion {
   tipo: 'admin';
   id: number;
   usuario: string;
@@ -27,24 +22,30 @@ export interface AdminSesion {
 
 export type Sesion = PacienteSesion | AdminSesion;
 
-const CLAVE_STORAGE = 'vidaplena_sesion';
-
 @Injectable({ providedIn: 'root' })
 export class SessionService {
+  private sesion: Sesion | null = null;
+
+  constructor() {
+    // Retira el estado inseguro del taller anterior, sin tocar otras claves del navegador.
+    localStorage.removeItem('vidaplena_sesion');
+  }
+
   guardarSesion(sesion: Sesion): void {
-    localStorage.setItem(CLAVE_STORAGE, JSON.stringify(sesion));
+    this.sesion = sesion;
   }
 
   obtenerSesion(): Sesion | null {
-    const crudo = localStorage.getItem(CLAVE_STORAGE);
-    return crudo ? (JSON.parse(crudo) as Sesion) : null;
+    if (this.sesion && Date.now() >= this.sesion.expira_en) this.cerrarSesion();
+    return this.sesion;
   }
 
   esAdmin(): boolean {
-    return this.obtenerSesion()?.tipo === 'admin';
+    const sesion = this.obtenerSesion();
+    return sesion?.tipo === 'admin' && sesion.rol === 'administrador';
   }
 
   cerrarSesion(): void {
-    localStorage.removeItem(CLAVE_STORAGE);
+    this.sesion = null;
   }
 }
