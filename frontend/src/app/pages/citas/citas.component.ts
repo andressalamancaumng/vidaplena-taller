@@ -163,7 +163,14 @@ export class CitasComponent implements OnInit {
 
   cargarMisCitas(): void {
     if (!this.sesionPaciente) return;
-    this.api.citasDePaciente(this.sesionPaciente.id).subscribe((datos) => (this.misCitas = datos));
+    this.api.citasDePaciente(this.sesionPaciente.id).subscribe({
+      next: (datos) => (this.misCitas = datos),
+      error: (err) => {
+        this.misCitas = [];
+        this.mensaje = err?.error?.detail ?? 'No se pudieron cargar las citas.';
+        this.mensajeTipo = 'error';
+      },
+    });
   }
 
   agendar(): void {
