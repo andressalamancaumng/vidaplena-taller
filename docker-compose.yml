@@ -4,17 +4,17 @@ services:
     container_name: vidaplena_db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root_pw_taller
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Primero ejecuta scripts/configurar.py}
       MYSQL_DATABASE: vidaplena
       MYSQL_USER: vidaplena_app
-      MYSQL_PASSWORD: vidaplena_app_pw
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Primero ejecuta scripts/configurar.py}
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - vidaplena_db_data:/var/lib/mysql
-      - ./backend/init-db:/docker-entrypoint-initdb.d
+      - ./backend/init-db:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_pw_taller"]
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u $$MYSQL_USER $$MYSQL_DATABASE -e 'SELECT 1' >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -27,22 +27,32 @@ services:
       DB_HOST: db
       DB_PORT: "3306"
       DB_USER: vidaplena_app
-      DB_PASSWORD: vidaplena_app_pw
+      DB_PASSWORD: ${DB_PASSWORD:?Primero ejecuta scripts/configurar.py}
       DB_NAME: vidaplena
+      DATA_KEY: ${DATA_KEY:?Falta la llave de cifrado}
+      INDEX_KEY: ${INDEX_KEY:?Falta la llave del indice}
+      JWT_KEY: ${JWT_KEY:?Falta la llave de firma}
+      CARGAR_DEMO: ${CARGAR_DEMO:-true}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/salud', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
 
   frontend:
     build: ./frontend
     container_name: vidaplena_frontend
     restart: unless-stopped
     ports:
-      - "4200:80"
+      - "127.0.0.1:4200:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   vidaplena_db_data:

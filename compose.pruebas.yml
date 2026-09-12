@@ -1,0 +1,27 @@
+# Base efímera y aislada: no usa el volumen ni las llaves de la aplicación.
+name: vidaplena-pruebas
+services:
+  db-pruebas:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: clave_publica_solo_pruebas
+      MYSQL_ROOT_HOST: "%"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysql -h 127.0.0.1 -u root -e 'SELECT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  pruebas:
+    build:
+      context: ./backend
+      target: pruebas
+    environment:
+      VIDAPLENA_TEST_MYSQL: "1"
+      DB_HOST: db-pruebas
+      DB_USER: root
+      DB_PASSWORD: clave_publica_solo_pruebas
+    depends_on:
+      db-pruebas:
+        condition: service_healthy
