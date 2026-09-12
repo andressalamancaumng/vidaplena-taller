@@ -16,6 +16,7 @@ export interface PacienteSesion {
   id: number;
   nombre: string;
   cedula: string;
+  contrasena: string;
 }
 
 export interface AdminSesion {

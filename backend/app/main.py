@@ -20,7 +20,9 @@ from datetime import date, time as time_type
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 # Esquema de seguridad OAuth2
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, HTTPBasic, HTTPBasicCredentials
+security = HTTPBasic()
+import bcrypt
 from pydantic import BaseModel
 
 from app import database
@@ -52,18 +54,34 @@ app.add_middleware(
 # Define que el token se obtiene en el endpoint de login de admin
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login/admin")
 
-def verificar_admin(token: str = Depends(oauth2_scheme)):
-    """
-    Valida el token enviado en el encabezado Authorization.
-    En esta fase, se usa un token estático simulado.
-    """
-    if token != "admin_secreto_123":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Acceso denegado: Token inválido o ausente",
-            headers={"WWW-Authenticate": "Bearer"},
+def verificar_admin(credenciales: HTTPBasicCredentials = Depends(security)):
+    """Valida usuario/contraseña de administrador contra la base de datos antes de dejar
+    pasar a un endpoint protegido."""
+    conexion = database.obtener_conexion()
+    cursor = conexion.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, usuario, rol, contrasena FROM usuarios_admin WHERE usuario = %s",
+            (credenciales.username,),
         )
-    return token
+        fila = cursor.fetchone()
+    finally:
+        cursor.close()
+        conexion.close()
+
+    if not fila or not verificar_contrasena(credenciales.password, fila[3]):
+        raise HTTPException(
+            status_code=401,
+            detail="Credenciales de administrador no validas",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+
+    def verificar_contrasena(password_plano: str, hash_guardado: str) -> bool:
+    try:
+        return bcrypt.checkpw(password_plano.encode(), hash_guardado.encode())
+    except Exception:
+        return False
 
 # Configuración de cifrado AES (Modo ECB para búsquedas exactas)
 CLAVE_AES = b'12345678901234567890123456789012'
@@ -133,10 +151,11 @@ def registrar_paciente(datos: PacienteRegistro):
     cursor = conexion.cursor()
     try:
         cedula_cifrada = cifrar(datos.cedula)
+        hash_pw = bcrypt.hashpw(datos.contrasena.encode(), bcrypt.gensalt()).decode()
         cursor.execute(
             "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
             "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, cedula_cifrada, datos.telefono, datos.correo, datos.contrasena),
+            (datos.nombre, cedula_cifrada, datos.telefono, datos.correo, hash_pw),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
@@ -152,11 +171,11 @@ def login_paciente(datos: LoginRequest):
     try:
         identificador_cifrado = cifrar(datos.identificador)
         cursor.execute(
-            "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (identificador_cifrado, datos.contrasena),
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila :
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         return {"id": fila[0], "nombre": fila[1], "cedula": descifrar(fila[2])}
     finally:
@@ -232,9 +251,29 @@ def crear_cita(datos: CitaCreate):
         cursor.close()
         conexion.close()
 
+def verificar_paciente(credenciales: HTTPBasicCredentials = Depends(security)):
+    conexion = database.obtener_conexion()
+    cursor = conexion.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, nombre, cedula, contrasena FROM pacientes WHERE cedula = %s",
+            (credenciales.username,),
+        )
+        fila = cursor.fetchone()
+    finally:
+        cursor.close()
+        conexion.close()
+
+    if not fila or not verificar_contrasena(credenciales.password, fila[3]):
+        raise HTTPException(
+            status_code=401,
+            detail="Credenciales inválidas",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
 
 @app.get("/api/citas/{cita_id}")
-def obtener_cita(cita_id: int):
+def obtener_cita(cita_id: int, paciente: dict = Depends(verificar_paciente)):
     """Detalle completo de una cita, incluido el diagnóstico."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
@@ -253,6 +292,11 @@ def obtener_cita(cita_id: int):
         dic = fila_a_dict(cursor, fila)
         if dic.get("diagnostico"):
             dic["diagnostico"] = descifrar(dic["diagnostico"])
+        if dic["paciente_id"] != paciente["id"]:
+            raise HTTPException(
+                status_code=403, detail="No tiene permiso para consultar esta cita"
+            )
+
         return dic
     finally:
         cursor.close()

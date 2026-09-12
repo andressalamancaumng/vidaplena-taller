@@ -123,6 +123,7 @@ export class LoginComponent {
             id: respuesta.id,
             nombre: respuesta.nombre,
             cedula: respuesta.cedula,
+            contrasena: datos.contrasena,
           });
           this.router.navigate(['/citas']);
         } else {
