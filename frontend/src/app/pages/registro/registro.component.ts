@@ -48,7 +48,7 @@ import { ApiService } from '../../core/api.service';
             </div>
           </div>
           <div class="vp-form-campo">
-            <label for="contrasena">Contraseña</label>
+            <label for="contrasena">Contraseña (mínimo 12 caracteres; máximo 72 bytes)</label>
             <p-password
               id="contrasena"
               formControlName="contrasena"
@@ -80,7 +80,7 @@ export class RegistroComponent {
     cedula: ['', Validators.required],
     telefono: [''],
     correo: [''],
-    contrasena: ['', Validators.required],
+    contrasena: ['', [Validators.required, Validators.minLength(12), Validators.maxLength(72)]],
   });
 
   mensaje = '';
