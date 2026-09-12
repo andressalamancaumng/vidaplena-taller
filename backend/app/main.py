@@ -1,37 +1,44 @@
 """
-VidaPlena — API de la Red de Clínicas (aplicación del taller)
+VidaPlena — API de la Red de Clínicas (SOLUCIÓN DE REFERENCIA)
 ----------------------------------------------------------------
-Seguridad Informática — Ingeniería Multimedia, UMNG — Sesión 7
+Seguridad Informática — Ingeniería Multimedia, UMNG
+Sesión 7 (fallas de seguridad de datos) / Sesión 8 (aplicaciones seguras)
 
-Esta API gestiona pacientes, citas y facturas de una red de clínicas
-FICTICIA. Es la aplicación "insegura" del taller: contiene fallas de
-seguridad de datos sembradas a propósito para que ustedes las encuentren
-y las corrijan (ver la Guía del Taller en docs/).
+Esta es la versión corregida de la API del taller, usada como material
+del docente (NO se comparte con los estudiantes como enunciado). Corrige
+las 5 fallas sembradas originalmente:
 
-No es necesario (ni se espera) que memoricen este archivo antes de
-empezar: la idea es que lo exploren, lo prueben desde el navegador o con
-curl/Postman, y vayan identificando qué está mal a medida que avanza el
-taller.
+  Falla 1 (Inyección SQL)              -> buscar_paciente() usa consulta parametrizada.
+  Falla 2 (Control de acceso roto)     -> /api/admin/pacientes exige rol admin (requerir_admin).
+  Falla 3 (IDOR)                       -> citas y facturas verifican propiedad del recurso.
+  Falla 4 (Autenticación insegura)     -> contraseñas con bcrypt + sesión con JWT.
+  Falla 5 (Datos sensibles en claro)   -> cédula y diagnóstico cifrados (Fernet) en reposo.
+
+Ver app/security.py para el detalle de cada mecanismo y app/seed.py para
+el sembrado de datos de demostración (ahora en la aplicación, no en SQL
+plano, porque requiere hashing/cifrado).
 """
 
 from typing import Optional
 from datetime import date, time as time_type
 
-from fastapi import FastAPI, HTTPException
+import mysql.connector
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app import database
+from app import database, security
+from app.seed import sembrar_datos_demo
 
 app = FastAPI(
     title="VidaPlena API",
-    description="Red de Clínicas VidaPlena — aplicación del taller de Seguridad de Datos (UMNG).",
-    version="1.0.0",
+    description="Red de Clínicas VidaPlena — solución de referencia (UMNG, Seguridad Informática).",
+    version="2.0.0",
 )
 
 # CORS abierto a propósito para simplificar el taller (el frontend Angular
-# corre en un puerto distinto al backend). Esto no es una de las fallas
-# que se pide corregir, pero en un sistema real tampoco se dejaría así.
+# corre en un puerto distinto al backend). No es una de las 5 fallas del
+# ejercicio, pero en un sistema real tampoco se dejaría así.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,6 +46,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def evento_arranque():
+    """Siembra los datos de demostración la primera vez que arranca el contenedor."""
+    sembrar_datos_demo()
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +89,19 @@ def fila_a_dict(cursor, fila):
     return dict(zip(columnas, fila))
 
 
+def _verificar_propiedad_o_admin(usuario: security.UsuarioActual, paciente_id: int):
+    """
+    Corrige la Falla 3 (IDOR): un paciente solo puede acceder a SUS PROPIOS
+    recursos (citas, facturas). Un administrador puede acceder a los de
+    cualquier paciente.
+    """
+    if usuario.rol != "admin" and usuario.id != paciente_id:
+        raise HTTPException(
+            status_code=403,
+            detail="No tiene permiso para acceder a la información de otro paciente.",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Pacientes
 # ---------------------------------------------------------------------------
@@ -86,12 +112,22 @@ def registrar_paciente(datos: PacienteRegistro):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (datos.nombre, datos.cedula, datos.telefono, datos.correo, datos.contrasena),
+            "INSERT INTO pacientes (nombre, cedula, cedula_hash, telefono, correo, contrasena_hash) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                datos.nombre,
+                security.encrypt_value(datos.cedula),
+                security.hash_lookup(datos.cedula),
+                datos.telefono,
+                datos.correo,
+                security.hash_password(datos.contrasena),
+            ),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Paciente registrado"}
+    except mysql.connector.errors.IntegrityError:
+        conexion.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un paciente registrado con esa cédula.")
     finally:
         cursor.close()
         conexion.close()
@@ -103,13 +139,20 @@ def login_paciente(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, nombre, cedula FROM pacientes WHERE cedula = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, nombre, cedula, contrasena_hash FROM pacientes WHERE cedula_hash = %s",
+            (security.hash_lookup(datos.identificador),),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not security.verify_password(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+        token = security.crear_token({"sub": str(fila[0]), "rol": "paciente"})
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "id": fila[0],
+            "nombre": fila[1],
+            "cedula": security.decrypt_value(fila[2]),
+        }
     finally:
         cursor.close()
         conexion.close()
@@ -121,13 +164,20 @@ def login_admin(datos: LoginRequest):
     cursor = conexion.cursor()
     try:
         cursor.execute(
-            "SELECT id, usuario, rol FROM usuarios_admin WHERE usuario = %s AND contrasena = %s",
-            (datos.identificador, datos.contrasena),
+            "SELECT id, usuario, rol, contrasena_hash FROM usuarios_admin WHERE usuario = %s",
+            (datos.identificador,),
         )
         fila = cursor.fetchone()
-        if not fila:
+        if not fila or not security.verify_password(datos.contrasena, fila[3]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+        token = security.crear_token({"sub": str(fila[0]), "rol": "admin"})
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "id": fila[0],
+            "usuario": fila[1],
+            "rol": fila[2],
+        }
     finally:
         cursor.close()
         conexion.close()
@@ -135,14 +185,37 @@ def login_admin(datos: LoginRequest):
 
 @app.get("/api/pacientes/buscar")
 def buscar_paciente(cedula: str):
-    """Búsqueda de un paciente por número de cédula (usada en recepción)."""
+    """
+    Búsqueda de un paciente por número de cédula (usada en recepción, sin
+    necesidad de que el personal de recepción inicie sesión como admin —
+    así se comporta la aplicación original, ver el frontend /buscar).
+
+    Corrige la Falla 1 (inyección SQL): la consulta ahora es parametrizada
+    y busca por `cedula_hash` (hash determinístico), ya que la cédula se
+    guarda cifrada (Fernet, Falla 5) y no es directamente comparable con
+    un `=` en SQL.
+
+    Nota de diseño para el docente: a diferencia de /api/admin/pacientes
+    (Falla 2, corregida exigiendo rol admin) este endpoint intencionalmente
+    NO exige autenticación, para no romper el flujo de recepción existente
+    en el frontend. Si se quisiera reforzar esto (p. ej. exigir una sesión
+    de "personal" separada de paciente/admin), sería una extensión más allá
+    del alcance de las 5 fallas originales del taller.
+    """
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
-        consulta = f"SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula = '{cedula}'"
-        cursor.execute(consulta)
+        cursor.execute(
+            "SELECT id, nombre, cedula, telefono, correo FROM pacientes WHERE cedula_hash = %s",
+            (security.hash_lookup(cedula),),
+        )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultados = []
+        for f in filas:
+            fila_dict = fila_a_dict(cursor, f)
+            fila_dict["cedula"] = security.decrypt_value(fila_dict["cedula"])
+            resultados.append(fila_dict)
+        return resultados
     finally:
         cursor.close()
         conexion.close()
@@ -153,15 +226,17 @@ def buscar_paciente(cedula: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/citas")
-def crear_cita(datos: CitaCreate):
+def crear_cita(datos: CitaCreate, usuario: security.UsuarioActual = Depends(security.obtener_usuario_actual)):
+    _verificar_propiedad_o_admin(usuario, datos.paciente_id)
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
+        diagnostico_cifrado = security.encrypt_value(datos.diagnostico) if datos.diagnostico else None
         cursor.execute(
             "INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (datos.paciente_id, datos.fecha, datos.hora, datos.medico,
-             datos.motivo_consulta, datos.diagnostico),
+             datos.motivo_consulta, diagnostico_cifrado),
         )
         conexion.commit()
         return {"id": cursor.lastrowid, "mensaje": "Cita creada"}
@@ -171,8 +246,8 @@ def crear_cita(datos: CitaCreate):
 
 
 @app.get("/api/citas/{cita_id}")
-def obtener_cita(cita_id: int):
-    """Detalle completo de una cita, incluido el diagnóstico."""
+def obtener_cita(cita_id: int, usuario: security.UsuarioActual = Depends(security.obtener_usuario_actual)):
+    """Detalle completo de una cita, incluido el diagnóstico. Corrige la Falla 3 (IDOR)."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -186,14 +261,19 @@ def obtener_cita(cita_id: int):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=404, detail="Cita no encontrada")
-        return fila_a_dict(cursor, fila)
+        resultado = fila_a_dict(cursor, fila)
+        _verificar_propiedad_o_admin(usuario, resultado["paciente_id"])
+        if resultado.get("diagnostico"):
+            resultado["diagnostico"] = security.decrypt_value(resultado["diagnostico"])
+        return resultado
     finally:
         cursor.close()
         conexion.close()
 
 
 @app.get("/api/citas/paciente/{paciente_id}")
-def citas_de_paciente(paciente_id: int):
+def citas_de_paciente(paciente_id: int, usuario: security.UsuarioActual = Depends(security.obtener_usuario_actual)):
+    _verificar_propiedad_o_admin(usuario, paciente_id)
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -213,7 +293,13 @@ def citas_de_paciente(paciente_id: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/facturas/paciente/{paciente_id}")
-def facturas_de_paciente(paciente_id: int):
+def facturas_de_paciente(paciente_id: int, usuario: security.UsuarioActual = Depends(security.obtener_usuario_actual)):
+    """
+    Corrige el mismo patrón de IDOR (Falla 3) presente en el endpoint de
+    citas: en la versión original, este endpoint tampoco validaba
+    propiedad del recurso.
+    """
+    _verificar_propiedad_o_admin(usuario, paciente_id)
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -233,10 +319,10 @@ def facturas_de_paciente(paciente_id: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/admin/pacientes")
-def listar_todos_los_pacientes():
+def listar_todos_los_pacientes(usuario: security.UsuarioActual = Depends(security.requerir_admin)):
     """
     Vista administrativa: todos los pacientes con su última consulta y
-    diagnóstico, pensada para el personal de la clínica.
+    diagnóstico. Corrige la Falla 2 (antes, sin ninguna protección).
     """
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
@@ -249,7 +335,14 @@ def listar_todos_los_pacientes():
             "ORDER BY p.id"
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultados = []
+        for f in filas:
+            fila_dict = fila_a_dict(cursor, f)
+            fila_dict["cedula"] = security.decrypt_value(fila_dict["cedula"])
+            if fila_dict.get("diagnostico"):
+                fila_dict["diagnostico"] = security.decrypt_value(fila_dict["diagnostico"])
+            resultados.append(fila_dict)
+        return resultados
     finally:
         cursor.close()
         conexion.close()
