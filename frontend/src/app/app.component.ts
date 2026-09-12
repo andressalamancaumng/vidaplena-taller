@@ -7,6 +7,8 @@ import { ButtonModule } from 'primeng/button';
 import { MenuItem } from 'primeng/api';
 
 import { SessionService } from './core/session.service';
+import { ApiService } from './core/api.service';
+import { finalize } from 'rxjs';
 
 @Component({
   selector: 'app-root',
@@ -44,14 +46,16 @@ export class AppComponent {
     { label: 'Admin', icon: 'pi pi-shield', routerLink: '/admin' },
   ];
 
-  constructor(private session: SessionService, private router: Router) {}
+  constructor(private session: SessionService, private router: Router, private api: ApiService) {}
 
   get sesionActiva(): boolean {
     return this.session.obtenerSesion() !== null;
   }
 
   cerrarSesion(): void {
-    this.session.cerrarSesion();
-    this.router.navigate(['/']);
+    this.api.cerrarSesion().pipe(finalize(() => {
+      this.session.cerrarSesion();
+      this.router.navigate(['/']);
+    })).subscribe({ error: () => { /* Sin red, se borra la sesión local; el JWT tiene expiración. */ } });
   }
 }
