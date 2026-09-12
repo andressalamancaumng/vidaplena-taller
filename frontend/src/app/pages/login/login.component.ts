@@ -117,8 +117,13 @@ export class LoginComponent {
     peticion.subscribe({
       next: (respuesta) => {
         this.enviando = false;
+        const token = {
+          access_token: respuesta.access_token,
+          expira_en: Date.now() + respuesta.expires_in * 1000,
+        };
         if (this.tipoSeleccionado === 'paciente') {
           this.session.guardarSesion({
+            ...token,
             tipo: 'paciente',
             id: respuesta.id,
             nombre: respuesta.nombre,
@@ -127,6 +132,7 @@ export class LoginComponent {
           this.router.navigate(['/citas']);
         } else {
           this.session.guardarSesion({
+            ...token,
             tipo: 'admin',
             id: respuesta.id,
             usuario: respuesta.usuario,
