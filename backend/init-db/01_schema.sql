@@ -4,11 +4,12 @@
 CREATE TABLE IF NOT EXISTS pacientes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(150) NOT NULL,
-    cedula VARCHAR(20) NOT NULL UNIQUE,
+    cedula VARCHAR(255) NOT NULL UNIQUE,
     telefono VARCHAR(20),
     correo VARCHAR(150),
     contrasena VARCHAR(255) NOT NULL
 );
+
 
 CREATE TABLE IF NOT EXISTS usuarios_admin (
     id INT AUTO_INCREMENT PRIMARY KEY,
