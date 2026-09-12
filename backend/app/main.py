@@ -15,9 +15,10 @@ taller.
 """
 
 from typing import Optional
-from datetime import date, time as time_type
+from datetime import date, time as time_type, datetime, timedelta
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
+import jwt
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -29,6 +30,27 @@ app = FastAPI(
     version="1.0.0",
 )
 
+SECRET_KEY = "cambia-esta-clave-por-una-variable-de-entorno-en-produccion"
+ALGORITHM = "HS256"
+
+
+def crear_token(datos: dict) -> str:
+    payload = datos.copy()
+    payload["exp"] = datetime.utcnow() + timedelta(hours=8)
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verificar_token(authorization: str = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="No autenticado")
+    token = authorization.replace("Bearer ", "")
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    
 # CORS abierto a propósito para simplificar el taller (el frontend Angular
 # corre en un puerto distinto al backend). Esto no es una de las fallas
 # que se pide corregir, pero en un sistema real tampoco se dejaría así.
@@ -109,7 +131,8 @@ def login_paciente(datos: LoginRequest):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2]}
+        token = crear_token({"sub": str(fila[0]), "tipo": "paciente"})
+        return {"id": fila[0], "nombre": fila[1], "cedula": fila[2], "token": token}
     finally:
         cursor.close()
         conexion.close()
@@ -127,14 +150,15 @@ def login_admin(datos: LoginRequest):
         fila = cursor.fetchone()
         if not fila:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        return {"id": fila[0], "usuario": fila[1], "rol": fila[2]}
+        token = crear_token({"sub": str(fila[0]), "tipo": "admin"})
+        return {"id": fila[0], "usuario": fila[1], "rol": fila[2], "token": token}
     finally:
         cursor.close()
         conexion.close()
 
 
 @app.get("/api/pacientes/buscar")
-def buscar_paciente(cedula: str):
+def buscar_paciente(cedula: str, sesion: dict = Depends(verificar_token)):
     """Búsqueda de un paciente por número de cédula (usada en recepción)."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
@@ -171,7 +195,7 @@ def crear_cita(datos: CitaCreate):
 
 
 @app.get("/api/citas/{cita_id}")
-def obtener_cita(cita_id: int):
+def obtener_cita(cita_id: int, sesion: dict = Depends(verificar_token)):
     """Detalle completo de una cita, incluido el diagnóstico."""
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
@@ -193,7 +217,7 @@ def obtener_cita(cita_id: int):
 
 
 @app.get("/api/citas/paciente/{paciente_id}")
-def citas_de_paciente(paciente_id: int):
+def citas_de_paciente(paciente_id: int, sesion: dict = Depends(verificar_token)):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -213,7 +237,7 @@ def citas_de_paciente(paciente_id: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/facturas/paciente/{paciente_id}")
-def facturas_de_paciente(paciente_id: int):
+def facturas_de_paciente(paciente_id: int, sesion: dict = Depends(verificar_token)):
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
@@ -233,11 +257,13 @@ def facturas_de_paciente(paciente_id: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/admin/pacientes")
-def listar_todos_los_pacientes():
+def listar_todos_los_pacientes(sesion: dict = Depends(verificar_token)):
     """
     Vista administrativa: todos los pacientes con su última consulta y
     diagnóstico, pensada para el personal de la clínica.
     """
+    if sesion.get("tipo") != "admin":
+        raise HTTPException(status_code=403, detail="Solo administradores")
     conexion = database.obtener_conexion()
     cursor = conexion.cursor()
     try:
