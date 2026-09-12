@@ -256,7 +256,10 @@ def facturas_de_paciente(paciente_id: int, sesion: dict = Depends(verificar_toke
             (paciente_id,),
         )
         filas = cursor.fetchall()
-        return [fila_a_dict(cursor, f) for f in filas]
+        resultados = [fila_a_dict(cursor, f) for f in filas]
+        for r in resultados:
+            r["valor"] = float(database.descifrar(r["valor"]))
+        return resultados
     finally:
         cursor.close()
         conexion.close()
