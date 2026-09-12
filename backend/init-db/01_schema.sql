@@ -4,7 +4,8 @@
 CREATE TABLE IF NOT EXISTS pacientes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(150) NOT NULL,
-    cedula VARCHAR(20) NOT NULL UNIQUE,
+    cedula VARCHAR(255) NOT NULL,
+    cedula_indice CHAR(64) NOT NULL UNIQUE,
     telefono VARCHAR(20),
     correo VARCHAR(150),
     contrasena VARCHAR(255) NOT NULL
@@ -38,21 +39,20 @@ CREATE TABLE IF NOT EXISTS facturas (
     FOREIGN KEY (paciente_id) REFERENCES pacientes(id)
 );
 
--- Datos de ejemplo, 100% ficticios (mismos nombres usados en el laboratorio anterior)
-INSERT INTO pacientes (nombre, cedula, telefono, correo, contrasena) VALUES
-('Ana Ficticia Pérez', '1010023456', '3011234567', 'ana.ficticia@correoejemplo.co', 'Cl4veSegura123'),
-('Carlos Ejemplo Gómez', '1015098765', '3109876543', 'carlos.ejemplo@correoejemplo.co', 'MiPerro2019'),
-('Laura Modelo Rodríguez', '1022334455', '3201122334', 'laura.modelo@correoejemplo.co', '12345678');
+-- Guardar solo la identidad de cada sesión permite revocarla sin almacenar el JWT.
+CREATE TABLE IF NOT EXISTS sesiones (
+    id CHAR(64) PRIMARY KEY,
+    usuario_id INT NOT NULL,
+    tipo VARCHAR(10) NOT NULL,
+    expira DATETIME NOT NULL,
+    INDEX idx_sesion_expira (expira)
+);
 
-INSERT INTO usuarios_admin (usuario, contrasena, rol) VALUES
-('admin', 'Admin123!', 'administrador');
+-- Comprueba que los reinicios reutilicen las llaves originales, sin guardarlas aquí.
+CREATE TABLE IF NOT EXISTS seguridad_estado (
+    id TINYINT PRIMARY KEY,
+    comprobante VARCHAR(255) NOT NULL,
+    indice_comprobante CHAR(64) NOT NULL
+);
 
-INSERT INTO citas (paciente_id, fecha, hora, medico, motivo_consulta, diagnostico) VALUES
-(1, '2026-09-10', '09:00:00', 'Dra. Valentina Ríos', 'Control anual', 'Paciente sana, sin hallazgos relevantes.'),
-(2, '2026-09-11', '10:30:00', 'Dr. Mateo Salazar', 'Dolor abdominal', 'Sospecha de gastritis, se ordenan exámenes.'),
-(3, '2026-09-12', '14:00:00', 'Dra. Valentina Ríos', 'Consulta psicológica', 'Episodio de ansiedad, se remite a psicología.');
-
-INSERT INTO facturas (paciente_id, servicio, valor, estado_pago, dias_mora) VALUES
-(1, 'Consulta general', 80000.00, 'pagado', 0),
-(2, 'Exámenes de laboratorio', 250000.00, 'pendiente', 15),
-(3, 'Consulta psicológica', 120000.00, 'pendiente', 45);
+-- app/datos_demo.py inserta los ejemplos ya cifrados y con hashes bcrypt.
